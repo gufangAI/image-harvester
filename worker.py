@@ -2,7 +2,7 @@
 # Edge-proxied IIIF fetch -> WebP -> object store -> index. Idempotent (skip on .done marker).
 # Single item:  worker.py --id <id> --manifest <url> --title "<t>"
 # Sharded run:  worker.py --shard N --total M   (reads worklist.csv from private bucket)
-import os, sys, io, csv, json, time, argparse, urllib.parse, requests, boto3
+import os, sys, io, re, csv, json, time, argparse, urllib.parse, requests, boto3
 
 PROXY = os.environ["EDGE_PROXY"]                      # e.g. https://x.example.dev/fetch?url=
 EP, AK, SK = os.environ["R2_ENDPOINT"], os.environ["R2_KEY"], os.environ["R2_SECRET"]
@@ -53,25 +53,52 @@ def page_urls(m):
                 urls.append(f"{sid}/full/max/0/default.jpg" if sid else b.get("id"))
     return urls
 
+def extract_meta(m, req):
+    # capture ALL descriptive metadata in the same pass (no later backfill)
+    def norm(x):
+        if isinstance(x, list): x = x[0] if x else ""
+        if isinstance(x, dict):
+            v = x.get("@value") or x.get("value")
+            if v is None:
+                for vv in x.values():
+                    if isinstance(vv, list) and vv: return str(vv[0])
+                return ""
+            return str(v)
+        return str(x or "")
+    fields = {}
+    for it in (m.get("metadata") or []):
+        lab, val = norm(it.get("label")), norm(it.get("value"))
+        if lab: fields[lab] = val
+    author = dynasty = ""
+    for lab, val in fields.items():
+        if "Creator" in lab or "Author" in lab:
+            author = val.strip()
+            break
+    return {"req": req, "source_url": m.get("@id") or m.get("id") or "",
+            "author": author, "dynasty": dynasty, "fields": fields}
+
 def process(book):
     bid = book["book_id"]; prefix = f"book/{bid}/"; marker = f"{prefix}.done"
     try:
         s3.head_object(Bucket=DST, Key=marker); return "skip"            # idempotent
     except Exception:
         pass
-    urls = [u for u in page_urls(gfetch(book["manifest"]).json()) if u]
+    m = gfetch(book["manifest"]).json()
+    urls = [u for u in page_urls(m) if u]
     n = len(urls)
     if n == 0:
         return "fail:no_pages"
+    meta = extract_meta(m, book.get("req", ""))
     for i, u in enumerate(urls, 1):                                       # all-or-nothing: any failure aborts (no partial register)
         s3.put_object(Bucket=DST, Key=f"{prefix}page_{i:04d}.webp",
                       Body=to_webp(gfetch(u).content), ContentType="image/webp")
     sql = ("INSERT OR REPLACE INTO books_assets_v2 (book_id, book_title, source_root, source_relative_path, "
            "webp_prefix, page_count, upload_status, webp_status, frontend_visible, rights_status, collection, "
-           "req_no, part, category_code, library, created_at, updated_at) "
-           "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,strftime('%s','now'),strftime('%s','now'))")
+           "req_no, part, category_code, library, author, dynasty, meta_json, created_at, updated_at) "
+           "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,strftime('%s','now'),strftime('%s','now'))")
     p = [bid, book.get("title", bid), "lineb", f"lineb/{bid}", prefix, n, "done", "done", 1,
-         "public_domain", "overseas", book.get("req", ""), book.get("part", ""), book.get("cat", ""), book.get("lib", LIB)]
+         "public_domain", "overseas", book.get("req", ""), book.get("part", ""), book.get("cat", ""), book.get("lib", LIB),
+         meta.get("author", ""), meta.get("dynasty", ""), json.dumps(meta, ensure_ascii=False)]
     r = d1(sql, p)
     if not (r.status_code == 200 and r.json().get("success")):
         return f"fail:d1 {r.text[:120]}"
