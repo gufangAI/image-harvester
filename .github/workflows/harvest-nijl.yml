@@ -23,7 +23,7 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq libvips42 libvips-tools
-          pip install -q pyvips boto3 requests pillow
+          pip install -q pyvips boto3 requests pillow opencc
       - name: run shard
         env:
           P: ${{ secrets.P }}
