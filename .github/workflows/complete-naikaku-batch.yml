@@ -27,7 +27,7 @@ jobs:
       - name: clone priv
         env:
           P: ${{ secrets.P }}
-        run: git clone --depth 1 --quiet https://x-access-token:${P}@github.com/hosonzuo8848/harvester-priv.git _p
+        run: git clone --depth 1 --quiet https://x-access-token:${P}@github.com/gufangAI/harvester-priv.git _p
       - name: batch gap-fill (targeted enum + download, sequential)
         env:
           EDGE_PROXY: https://naikaku-mine.hosonzuo.workers.dev/fetch?url=
