@@ -47,7 +47,7 @@ jobs:
           LIST_BUCKET: ${{ secrets.LIST_BUCKET }}
           LIST_KEY: ${{ github.event.inputs.list_key }}
           DST_BUCKET: guyaofang-lib
-          DST_GUJI_BUCKET: guji-sea
+          DST_GUJI_BUCKET: naikaku-dl
           PAGE_WORKERS: "10"
           FORCE: ${{ github.event.inputs.force }}
         run: python stub.py --source naikaku --shard ${{ matrix.shard }} --total ${{ github.event.inputs.total }}
